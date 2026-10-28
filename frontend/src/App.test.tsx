@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import App from './App'
 
@@ -91,5 +91,15 @@ describe('homepage interactions', () => {
     await user.type(screen.getByLabelText('名称'), '新名称')
     await user.click(screen.getByRole('button', { name: /保存到 Linkwarden/ }))
     expect(await screen.findByRole('link', { name: /新名称/ })).toBeInTheDocument()
+  })
+
+  it('loads the favicon from the bookmark site and falls back to the colored Linkwarden glyph on failure', async () => {
+    render(<App />)
+    await screen.findByRole('link', { name: /文档中心/ })
+    const favicon = screen.getByRole('img', { name: '文档中心网站图标' })
+    expect(favicon).toHaveAttribute('src', 'https://docs.example.org/favicon.ico')
+    fireEvent.error(favicon)
+    expect(screen.getByLabelText('文档中心 Linkwarden 图标')).toHaveStyle({ color: '#2563eb' })
+    expect(favicon).not.toBeVisible()
   })
 })

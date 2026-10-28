@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { DndContext, KeyboardSensor, PointerSensor, closestCenter, useDroppable, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
-import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable'
+import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { ArrowDown, ArrowUp, BookOpen, CalendarDays, Check, ChevronDown, ChevronRight, Cloud, Code, Command, ExternalLink, FileText, Folder, Github, Globe, GripVertical, House, Image, LayoutGrid, LoaderCircle, Mail, MessageCircle, Music, NotebookPen, Pencil, Plus, RefreshCw, Search, Settings2, Sparkles, Video, X, type LucideIcon } from 'lucide-react'
-import { buildSearchUrl, safeHttpUrl, type LinkLayout } from './domain'
+import { buildSearchUrl, reorderLinkIds, safeHttpUrl, siteFaviconUrl, type LinkLayout } from './domain'
 import './styles.css'
 
 type Collection = { id: number; name: string; ownerId: number }
@@ -118,12 +118,8 @@ export default function App() {
       const overId = Number(overString.slice('link-'.length))
       const over = home.links.find(link => link.id === overId)
       if (over && over.collectionId !== item.collectionId) { void saveCanonical(item, { collectionId: over.collectionId }); return }
-      const ids = home.links.filter(link => link.collectionId === item.collectionId).map(link => link.id)
-      const oldIndex = ids.indexOf(activeId), newIndex = ids.indexOf(overId)
-      if (oldIndex !== -1 && newIndex !== -1 && oldIndex !== newIndex) {
-        const newIds = arrayMove(ids, oldIndex, newIndex)
-        newIds.forEach((id, order) => { void patchLinkLayout(id, { order }) })
-      }
+      reorderLinkIds(home.links, home.preferences.links, item.collectionId, activeId, overId)
+        .forEach(({ id, order }) => { void patchLinkLayout(id, { order }) })
     }
   }
   const activeSearch = search.providers.find(provider => provider.id === search.activeProviderId) || search.providers[0]
@@ -171,16 +167,24 @@ function CollectionPanel({ collection, index, home, onCollapse, onMoveGroup, onE
 function SortableBookmark({ link, layout, onEdit, onLayout }: { link: Link; layout: LinkLayout; onEdit: (link: Link) => void; onLayout: (id: number, change: Partial<LinkLayout>) => Promise<void> | void }) {
   const sortable = useSortable({ id: `link-${link.id}` })
   const style = { transform: CSS.Transform.toString(sortable.transform), transition: sortable.transition }
-  const BookmarkIcon = iconFor(link.icon)
   return <article ref={sortable.setNodeRef} style={style} className={`bookmark ${layout.showDescription ? 'bookmark-wide' : ''}`} role="listitem">
     <div className="bookmark-main">
       <span className="drag-handle" {...sortable.attributes} {...sortable.listeners} aria-label="拖动网址"><GripVertical size={15}/></span>
-      {layout.showIcon && <span className="bookmark-icon" style={{ color: link.color || undefined }}><BookmarkIcon size={18}/></span>}
+      {layout.showIcon && <BookmarkSiteIcon link={link}/>}
       <div className="bookmark-copy">{layout.showName && <a className="bookmark-name" href={safeHttpUrl(link.url) ? link.url : '#'} target="_blank" rel="noreferrer" aria-label={`${link.name}，打开网址`}>{link.name}<ExternalLink size={11}/></a>}{layout.showDescription && <p className="bookmark-description">{link.description || link.url}</p>}</div>
       <div className="bookmark-hover-actions"><button aria-label={`编辑 ${link.name}`} onPointerDown={event => event.stopPropagation()} onClick={() => onEdit(link)}><Pencil size={13}/></button></div>
     </div>
     <div className="bookmark-customize" aria-label={`${link.name} 显示选项`}><button className={layout.showName ? 'field-active' : ''} aria-label={`切换名称 ${link.name}`} aria-pressed={layout.showName} onClick={() => void onLayout(link.id, { showName: !layout.showName })}>N</button><button className={layout.showIcon ? 'field-active' : ''} aria-label={`切换图标 ${link.name}`} aria-pressed={layout.showIcon} onClick={() => void onLayout(link.id, { showIcon: !layout.showIcon })}>◉</button><button className={layout.showDescription ? 'field-active' : ''} aria-label={`切换简介 ${link.name}`} aria-pressed={layout.showDescription} onClick={() => void onLayout(link.id, { showDescription: !layout.showDescription })}>≡</button></div>
   </article>
+}
+
+function BookmarkSiteIcon({ link }: { link: Link }) {
+  const [failed, setFailed] = useState(false)
+  useEffect(() => { setFailed(false) }, [link.url])
+  const favicon = siteFaviconUrl(link.url)
+  const Glyph = iconFor(link.icon)
+  if (failed || !favicon) return <span className="bookmark-icon" style={{ color: link.color || undefined }} aria-label={`${link.name} Linkwarden 图标`}><Glyph size={18}/></span>
+  return <span className="bookmark-icon" style={{ color: link.color || undefined }}><img src={favicon} alt={`${link.name}网站图标`} onError={() => setFailed(true)}/></span>
 }
 
 function LinkEditor({ link, collections, onClose, onSave }: { link: Link; collections: Collection[]; onClose: () => void; onSave: (value: Partial<Link>) => void }) {
