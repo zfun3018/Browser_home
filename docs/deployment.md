@@ -56,3 +56,13 @@ Docker Desktop 的开机启动和 Compose 服务的 `restart: always` 会让服�
 
 首次应用双 Docker 网络时，Compose 会重建现有 Linkwarden、PostgreSQL 和 Meilisearch 容器，可能造成短暂中断；数据库及归档目录仍使用原来的 bind mount。之后只改首页代码时通常只需重建首页服务。
 
+## 本机开发和测试
+
+运行容器只安装服务所需的 Python 包。需要本机运行后端测试时，在项目目录安装开发依赖：
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r backend/requirements-dev.txt
+.\.venv\Scripts\python.exe -m pytest backend/tests -q
+```
+
