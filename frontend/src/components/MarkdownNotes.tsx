@@ -14,6 +14,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T
 }
 
+function acceptSave(result: SaveResult, submitted: string, setContent: (value: (current: string) => string) => void, setSaved: (value: string) => void, setHash: (value: string) => void) {
+  // A response may arrive after the user has typed more. Advance the base version
+  // but replace the visible draft only when it still matches the submitted text.
+  setContent(current => current === submitted ? result.content : current)
+  setSaved(result.content)
+  setHash(result.hash)
+}
+
 export default function MarkdownNotes() {
   const [content, setContent] = useState('')
   const [saved, setSaved] = useState('')
@@ -64,7 +72,7 @@ export default function MarkdownNotes() {
             // A stale save deliberately receives 409 and makes a durable copy of
             // the local draft while leaving the Obsidian version untouched.
             const savedVersion = await request<SaveResult>('/api/notes', { method: 'PUT', body: JSON.stringify({ content: latest.content, expectedHash: latest.hash }) })
-            setContent(savedVersion.content); setSaved(savedVersion.content); setHash(savedVersion.hash); setRemote(null); setStatus('saved'); capturedConflict.current = false; setDraftCaptured(false)
+            acceptSave(savedVersion, latest.content, setContent, setSaved, setHash); setRemote(null); setStatus('saved'); capturedConflict.current = false; setDraftCaptured(false)
           } catch (error) {
             const conflict = (error as { body?: { content?: string; hash?: string } }).body
             if (conflict?.content !== undefined && conflict.hash) { setRemote({ content: conflict.content, hash: conflict.hash }); setDraftCaptured(true) }
@@ -79,8 +87,9 @@ export default function MarkdownNotes() {
     if (!hash || content === saved || remote || status === 'unavailable' || status === 'issue') return
     setStatus('saving')
     const timer = window.setTimeout(() => {
-      void request<SaveResult>('/api/notes', { method: 'PUT', body: JSON.stringify({ content, expectedHash: hash }) }).then(result => {
-        setContent(result.content); setSaved(result.content); setHash(result.hash); setStatus('saved'); capturedConflict.current = false
+      const submitted = content
+      void request<SaveResult>('/api/notes', { method: 'PUT', body: JSON.stringify({ content: submitted, expectedHash: hash }) }).then(result => {
+        acceptSave(result, submitted, setContent, setSaved, setHash); setStatus('saved'); capturedConflict.current = false
         setDraftCaptured(false)
       }).catch(error => {
         const conflict = (error as { status?: number; body?: { content?: string; hash?: string } })
@@ -99,10 +108,11 @@ export default function MarkdownNotes() {
 
   async function keepLocal() {
     if (!remote) return
+    const submitted = content
     setStatus('saving')
     try {
-      const result = await request<SaveResult>('/api/notes', { method: 'PUT', body: JSON.stringify({ content, expectedHash: remote.hash }) })
-      setContent(result.content); setSaved(result.content); setHash(result.hash); setRemote(null); setStatus('saved'); capturedConflict.current = false; setDraftCaptured(false)
+      const result = await request<SaveResult>('/api/notes', { method: 'PUT', body: JSON.stringify({ content: submitted, expectedHash: remote.hash }) })
+      acceptSave(result, submitted, setContent, setSaved, setHash); setRemote(null); setStatus('saved'); capturedConflict.current = false; setDraftCaptured(false)
     } catch (error) {
       const conflict = (error as { status?: number; body?: { content?: string; hash?: string } })
       if (conflict.status === 409 && conflict.body?.content !== undefined && conflict.body.hash) {

@@ -61,8 +61,56 @@ def test_stale_save_preserves_disk_version_and_saves_local_conflict_copy(tmp_pat
     assert captured.value.hash == digest("Obsidian edit")
     assert mounted.read_text(encoding="utf-8") == "Obsidian edit"
     conflicts = list((tmp_path / "conflicts").glob("conflict-*.md"))
-    assert len(conflicts) == 1
-    assert conflicts[0].read_text(encoding="utf-8") == "homepage draft"
+    assert len(conflicts) == 2
+    assert {path.read_text(encoding="utf-8") for path in conflicts} == {"Obsidian edit", "homepage draft"}
+
+
+def test_save_rechecks_file_after_initial_hash_check_before_truncating(tmp_path, monkeypatch):
+    mounted = tmp_path / "note.md"
+    mounted.write_text("base", encoding="utf-8", newline="")
+    notes = NoteStore(mounted, tmp_path / "conflicts")
+    read = notes._read
+    calls = 0
+
+    def read_then_external_edit():
+        nonlocal calls
+        value = read()
+        calls += 1
+        if calls == 1:
+            mounted.write_text("Obsidian changed during save", encoding="utf-8", newline="")
+        return value
+
+    monkeypatch.setattr(notes, "_read", read_then_external_edit)
+    with pytest.raises(NoteConflict) as captured:
+        notes.save("homepage draft", digest("base"))
+
+    external = "Obsidian changed during save"
+    assert captured.value.content == external
+    assert mounted.read_text(encoding="utf-8") == external
+    conflicts = list((tmp_path / "conflicts").glob("conflict-*.md"))
+    assert {path.read_text(encoding="utf-8") for path in conflicts} == {external, "homepage draft"}
+    assert not list((tmp_path / "conflicts").glob("backup-*.md"))
+
+
+def test_save_preserves_local_draft_if_mounted_file_disappears_after_first_read(tmp_path, monkeypatch):
+    mounted = tmp_path / "note.md"
+    mounted.write_text("base", encoding="utf-8", newline="")
+    notes = NoteStore(mounted, tmp_path / "conflicts")
+    read = notes._read
+
+    def read_then_remove():
+        value = read()
+        mounted.unlink()
+        return value
+
+    monkeypatch.setattr(notes, "_read", read_then_remove)
+    with pytest.raises(NoteUnavailable):
+        notes.save("homepage draft", digest("base"))
+
+    assert not mounted.exists()
+    preserved = list((tmp_path / "conflicts").glob("conflict-homepage-*.md"))
+    assert len(preserved) == 1
+    assert preserved[0].read_text(encoding="utf-8") == "homepage draft"
 
 
 def test_event_detects_external_edits_and_reports_unavailable_recovery(tmp_path):

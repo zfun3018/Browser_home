@@ -45,6 +45,11 @@ class NoteStore:
         target = self._conflict_dir / f"{prefix}-{stamp}-{uuid.uuid4().hex[:8]}.md"
         target.write_text(content, encoding="utf-8", newline="")
 
+    def _conflict(self, external: str, homepage: str) -> NoteConflict:
+        self._copy("conflict-external", external)
+        self._copy("conflict-homepage", homepage)
+        return NoteConflict(external, content_hash(external))
+
     def get(self) -> dict:
         with self._lock:
             content = self._read()
@@ -68,20 +73,43 @@ class NoteStore:
             if current_hash != expected_hash:
                 # The disk copy remains authoritative; the rejected browser draft is
                 # also persisted so a page close cannot discard either version.
-                self._copy("conflict", content)
-                raise NoteConflict(current, current_hash)
-            self._copy("backup", current)
-            # Keep a CRLF file in CRLF form when the browser textarea normalizes
-            # its value to LF, so ordinary edits do not rewrite the whole vault note.
-            if "\r\n" in current and "\n" not in current.replace("\r\n", ""):
-                content = content.replace("\r\n", "\n").replace("\n", "\r\n")
+                raise self._conflict(current, content)
             try:
-                # Write in place because host editors and Docker Desktop file binds
-                # do not consistently reflect host-side atomic file replacement.
-                with self._note_path.open("wb") as target:
+                # Re-read through the already-open handle immediately before the
+                # truncation. This also avoids switching to a replacement inode
+                # between the last check and the write.
+                with self._note_path.open("r+b") as target:
+                    latest = target.read().decode("utf-8")
+                    latest_hash = content_hash(latest)
+                    if latest_hash != expected_hash:
+                        raise self._conflict(latest, content)
+                    self._copy("backup", latest)
+                    # Keep a CRLF file in CRLF form when the browser textarea normalizes
+                    # its value to LF, so ordinary edits do not rewrite the whole vault note.
+                    if "\r\n" in latest and "\n" not in latest.replace("\r\n", ""):
+                        content = content.replace("\r\n", "\n").replace("\n", "\r\n")
+                    target.seek(0)
+                    target.truncate()
                     target.write(content.encode("utf-8"))
                     target.flush()
                     os.fsync(target.fileno())
+            except NoteConflict:
+                raise
+            except UnicodeDecodeError as exc:
+                raise NoteUnavailable("Obsidian 笔记不是有效的 UTF-8 文本") from exc
             except OSError as exc:
+                # A rename/delete or interrupted host write can occur after the
+                # first read. Preserve the submitted draft even when the mount
+                # becomes unavailable before this request can finish.
+                self._copy("conflict-homepage", content)
                 raise NoteUnavailable("无法写入 Obsidian 笔记") from exc
+            try:
+                after = self._read()
+            except NoteUnavailable:
+                self._copy("conflict-homepage", content)
+                raise
+            if content_hash(after) != content_hash(content):
+                # Detect a non-cooperating external writer that changed or replaced
+                # the file during our write, and retain both versions for resolution.
+                raise self._conflict(after, content)
             return {"content": content, "hash": content_hash(content), "status": "saved"}

@@ -40,6 +40,54 @@ describe('Obsidian Markdown notes', () => {
     expect(await screen.findByText('已保存到 Obsidian')).toBeInTheDocument()
   })
 
+  it('does not replace text typed while a save response is pending', async () => {
+    let resolveSave: ((value: Response) => void) | undefined
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === '/api/notes') {
+        if (init?.method === 'PUT') return new Promise<Response>(resolve => { resolveSave = resolve })
+        return response({ content: base, hash: baseHash, status: 'ok' })
+      }
+      return response({ changed: false, status: 'ok' })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    render(<MarkdownNotes />)
+    const editor = await screen.findByLabelText('Markdown 笔记内容')
+    fireEvent.change(editor, { target: { value: '# 已提交的快照' } })
+    await waitFor(() => expect(resolveSave).toBeDefined(), { timeout: 2000 })
+    fireEvent.change(editor, { target: { value: '# 保存期间继续输入' } })
+    await act(async () => { resolveSave?.(await response({ content: '# 已提交的快照', hash: 'new-base-hash', status: 'saved' })) })
+    expect(editor).toHaveValue('# 保存期间继续输入')
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/notes', expect.objectContaining({ method: 'PUT', body: JSON.stringify({ content: '# 保存期间继续输入', expectedHash: 'new-base-hash' }) })), { timeout: 2000 })
+  })
+
+  it('preserves typing made while an autosave is in flight and saves it against the new hash', async () => {
+    let resolveFirst: ((value: Response) => void) | undefined
+    const writes: Array<{ content: string; expectedHash: string }> = []
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input) === '/api/notes') {
+        if (init?.method === 'PUT') {
+          const body = JSON.parse(String(init.body)) as { content: string; expectedHash: string }
+          writes.push(body)
+          if (writes.length === 1) return new Promise<Response>(resolve => { resolveFirst = resolve })
+          return response({ content: body.content, hash: 'hash-after-second-save', status: 'saved' })
+        }
+        return response({ content: base, hash: baseHash, status: 'ok' })
+      }
+      return response({ changed: false, status: 'ok' })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    render(<MarkdownNotes />)
+    const editor = await screen.findByLabelText('Markdown 笔记内容')
+    fireEvent.change(editor, { target: { value: '# 第一次输入' } })
+    await waitFor(() => expect(writes).toHaveLength(1), { timeout: 2000 })
+    fireEvent.change(editor, { target: { value: '# 请求期间继续输入' } })
+    await act(async () => { resolveFirst?.(await response({ content: '# 第一次输入', hash: 'hash-after-first-save', status: 'saved' })) })
+    await waitFor(() => expect(writes).toHaveLength(2), { timeout: 2000 })
+    expect(writes[1]).toEqual({ content: '# 请求期间继续输入', expectedHash: 'hash-after-first-save' })
+    expect(editor).toHaveValue('# 请求期间继续输入')
+    expect(await screen.findByText('已保存到 Obsidian')).toBeInTheDocument()
+  })
+
   it('keeps the local draft visible and offers explicit choices on a write conflict', async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       if (String(input) === '/api/notes') {
