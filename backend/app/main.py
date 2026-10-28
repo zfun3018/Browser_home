@@ -1,8 +1,10 @@
 from pathlib import Path as FilePath
+import os
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request, Path
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from .config import Settings
@@ -100,6 +102,12 @@ def create_app(settings: Settings | None = None, linkwarden=None, store=None, no
     @app.put("/api/search-engines")
     def update_search(settings: SearchSettings):
         return app.state.store.save_search(settings)
+
+    # In the container, serve the production React build from the same origin as
+    # the API. Keeping this optional leaves the test/dev API-only app unchanged.
+    static_dir = os.environ.get("HOMEPAGE_STATIC_DIR")
+    if static_dir and FilePath(static_dir).is_dir():
+        app.mount("/", StaticFiles(directory=static_dir, html=True), name="homepage-static")
 
     return app
 
