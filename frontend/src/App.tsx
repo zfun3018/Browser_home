@@ -4,6 +4,7 @@ import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalList
 import { CSS } from '@dnd-kit/utilities'
 import { ArrowDown, ArrowUp, BookOpen, CalendarDays, Check, ChevronDown, ChevronRight, Cloud, Code, Command, ExternalLink, FileText, Folder, Github, Globe, GripVertical, House, Image, LayoutGrid, LoaderCircle, Mail, MessageCircle, Music, NotebookPen, Pencil, Plus, RefreshCw, Search, Settings2, Sparkles, Video, X, type LucideIcon } from 'lucide-react'
 import { buildSearchUrl, reorderLinkIds, safeHttpUrl, siteFaviconUrl, type LinkLayout } from './domain'
+import MarkdownNotes from './components/MarkdownNotes'
 import './styles.css'
 
 type Collection = { id: number; name: string; ownerId: number }
@@ -147,6 +148,7 @@ export default function App() {
         void patchCollectionLayout(target.id, { order: index })
       }} onEdit={setEditing} onLayout={patchLinkLayout} />)}</div>
     </DndContext>
+    <MarkdownNotes />
     <footer className="footer"><span>MADE FOR YOUR EVERYDAY</span><span>书签由 Linkwarden 管理 <span className="footer-dot">·</span> 轻松开始</span></footer>
     {editing && <LinkEditor link={editing} collections={home.collections} onClose={() => setEditing(null)} onSave={values => void saveCanonical(editing, values)} />}
     {settingsOpen && <SettingsDialog search={search} setSearch={setSearch} dark={dark} onDark={setDark} onClose={() => setSettingsOpen(false)} onSaved={() => void refresh(true)} />}
