@@ -19,6 +19,9 @@ Provide a local-first, dense browser homepage that keeps Linkwarden as the singl
 - Homepage SQLite owns presentation only: per-link visibility flags and order, per-collection order/collapse preference, search engine definitions, default engine, and app schema version.
 - The Markdown note remains in the Obsidian file and is not copied into SQLite. Conflict copies may be stored under the homepage data directory.
 - API keys stay server-side in a Docker secret file and never enter browser JS or browser storage.
+- The homepage can download and validate full-data ZIP backups. Archives contain Linkwarden PostgreSQL data and attachments, homepage state and note-conflict copies, the configured Obsidian note, Compose configuration, `.env`, and the Linkwarden API token as plaintext; the UI warns users to protect the archive as a password file.
+- The homepage reminds the user when no successful backup exists or the latest successful backup is more than seven days old. Imports validate and stage first, download a full rollback backup before confirmation, then replace Linkwarden data, homepage state, note conflicts, and the Obsidian note while preserving the current Compose configuration, `.env`, and API token.
+- The header provides a same-tab link to the local Linkwarden page at `http://localhost:3010`.
 
 ## Synchronization and safety
 - Use Linkwarden v2.16.3 API through a backend client. Fetch all pages; writes are idempotent and keyed by Linkwarden link ID.

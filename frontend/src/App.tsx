@@ -4,6 +4,7 @@ import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalList
 import { CSS } from '@dnd-kit/utilities'
 import { ArrowDown, ArrowUp, BookOpen, CalendarDays, Check, ChevronDown, ChevronRight, Cloud, Code, Command, ExternalLink, FileText, Folder, Github, Globe, GripVertical, House, Image, LayoutGrid, LoaderCircle, Mail, MessageCircle, Music, NotebookPen, Pencil, Plus, RefreshCw, Search, Settings2, Sparkles, Video, X, type LucideIcon } from 'lucide-react'
 import { buildSearchUrl, reorderLinkIds, safeHttpUrl, siteFaviconUrl, type LinkLayout } from './domain'
+import BackupControls from './components/BackupControls'
 import MarkdownNotes from './components/MarkdownNotes'
 import './styles.css'
 
@@ -40,6 +41,7 @@ export default function App() {
   const [editing, setEditing] = useState<Link | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [dark, setDark] = useState(false)
+  const [notesRevision, setNotesRevision] = useState(0)
 
   const refresh = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true)
@@ -132,7 +134,8 @@ export default function App() {
   }
 
   return <main className={dark ? 'app app-dark' : 'app'}>
-    <header className="topbar"><a className="brand" href="/" aria-label="我的起始页"><span className="brand-mark"><LayoutGrid size={19}/></span><span>我的空间</span></a><div className="top-actions"><span className="sync-indicator"><i className={offline ? 'dot dot-error' : 'dot'}/>{offline ? '连接异常' : 'Linkwarden 已同步'}</span><button className="icon-button" title="切换深色主题" aria-label="切换深色主题" onClick={() => setDark(v => !v)}><Sparkles size={17}/></button><button className="icon-button" title="设置" aria-label="设置" onClick={() => setSettingsOpen(true)}><Settings2 size={18}/></button></div></header>
+    <header className="topbar"><a className="brand" href="/" aria-label="我的起始页"><span className="brand-mark"><LayoutGrid size={19}/></span><span>我的空间</span></a><div className="top-actions"><span className="sync-indicator"><i className={offline ? 'dot dot-error' : 'dot'}/>{offline ? '连接异常' : 'Linkwarden 已同步'}</span><a className="linkwarden-button" href="http://localhost:3010"><ExternalLink size={15}/><span>打开 Linkwarden</span></a><button className="icon-button" title="切换深色主题" aria-label="切换深色主题" onClick={() => setDark(v => !v)}><Sparkles size={17}/></button><button className="icon-button" title="设置" aria-label="设置" onClick={() => setSettingsOpen(true)}><Settings2 size={18}/></button></div></header>
+    <BackupControls onImported={() => { setNotesRevision(value => value + 1); void refresh(true) }} />
     <section className="welcome"><div className="eyebrow"><span className="eyebrow-line"/>PERSONAL START PAGE</div><h1>把常去的地方，<em>放在一起。</em></h1><p className="welcome-sub">整齐一点，轻松开始。</p>
       <form className="searchbar" onSubmit={submitSearch}><Search size={21} className="search-icon"/><input aria-label="搜索网页" placeholder="搜索任何内容…" value={query} onChange={event => setQuery(event.target.value)}/>{search.providers.length > 1 && <select aria-label="搜索引擎" value={activeSearch?.id || ''} onChange={event => { const next = { ...search, activeProviderId: event.target.value }; setSearch(next); void api<SearchData>('/api/search-engines', { method: 'PUT', body: JSON.stringify(next) }).then(setSearch).catch(err => setError(err instanceof Error ? err.message : '搜索配置保存失败')) }}>{search.providers.map(provider => <option key={provider.id} value={provider.id}>{provider.name}</option>)}</select>}<button type="submit" aria-label="开始搜索" className="search-submit"><Command size={14}/> Enter</button></form>
       <div className="quick-meta"><span><span className="meta-number">{home.links.length}</span> 个网址</span><span className="meta-divider">/</span><span><span className="meta-number">{home.collections.length}</span> 个分组</span><button className="refresh-button" onClick={() => void refresh()} aria-label="刷新"><RefreshCw size={13}/> 刷新</button></div>
@@ -148,7 +151,7 @@ export default function App() {
         void patchCollectionLayout(target.id, { order: index })
       }} onEdit={setEditing} onLayout={patchLinkLayout} />)}</div>
     </DndContext>
-    <MarkdownNotes />
+    <MarkdownNotes key={notesRevision} />
     <footer className="footer"><span>MADE FOR YOUR EVERYDAY</span><span>书签由 Linkwarden 管理 <span className="footer-dot">·</span> 轻松开始</span></footer>
     {editing && <LinkEditor link={editing} collections={home.collections} onClose={() => setEditing(null)} onSave={values => void saveCanonical(editing, values)} />}
     {settingsOpen && <SettingsDialog search={search} setSearch={setSearch} dark={dark} onDark={setDark} onClose={() => setSettingsOpen(false)} onSaved={() => void refresh(true)} />}

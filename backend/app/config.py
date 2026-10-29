@@ -8,6 +8,7 @@ from pathlib import Path
 class Settings:
     data_dir: Path = Path("data")
     linkwarden_url: str = "http://linkwarden:3000"
+    backup_service_url: str = "http://backup:8010"
     token_file: Path | None = None
     allowed_origins: tuple[str, ...] = ("http://localhost:3011", "http://127.0.0.1:3011")
 
@@ -16,6 +17,7 @@ class Settings:
         token_path = os.environ.get("LINKWARDEN_API_TOKEN_FILE")
         return cls(data_dir=Path(os.environ.get("HOMEPAGE_DATA_DIR", "data")),
                    linkwarden_url=os.environ.get("LINKWARDEN_URL", "http://linkwarden:3000"),
+                   backup_service_url=os.environ.get("BACKUP_SERVICE_URL", "http://backup:8010"),
                    token_file=Path(token_path) if token_path else None)
 
     def read_token(self) -> str | None:

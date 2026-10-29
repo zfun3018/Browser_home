@@ -37,6 +37,13 @@ describe('homepage interactions', () => {
     expect(screen.getByRole('button', { name: /展开 工作/ })).toBeInTheDocument()
   })
 
+  it('provides a one-click link to the current Linkwarden page', async () => {
+    render(<App />)
+    const link = await screen.findByRole('link', { name: '打开 Linkwarden' })
+    expect(link).toHaveAttribute('href', 'http://localhost:3010')
+    expect(link).not.toHaveAttribute('target')
+  })
+
   it('retains canonical bookmarks and shows an offline state when a later refresh fails', async () => {
     const user = userEvent.setup()
     const fetchMock = vi.mocked(fetch)

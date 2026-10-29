@@ -13,14 +13,16 @@ class StateStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connection() as db:
             version = db.execute("PRAGMA user_version").fetchone()[0]
-            if version > 1:
+            if version > 2:
                 raise RuntimeError("Unsupported preferences schema version")
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS link_layout (id INTEGER PRIMARY KEY, value TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS collection_layout (id INTEGER PRIMARY KEY, value TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS search_settings (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL);
-                PRAGMA user_version=1;
             """)
+            if version < 2:
+                db.execute("CREATE TABLE IF NOT EXISTS backup_metadata (id INTEGER PRIMARY KEY CHECK(id=1), last_backup_at TEXT)")
+                db.execute("PRAGMA user_version=2")
 
     @contextmanager
     def connection(self):
@@ -59,3 +61,16 @@ class StateStore:
         with self.connection() as db:
             db.execute("INSERT INTO search_settings(id,value) VALUES (1,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value", (json.dumps(value),))
         return value
+
+    def last_backup_at(self) -> str | None:
+        with self.connection() as db:
+            row = db.execute("SELECT last_backup_at FROM backup_metadata WHERE id=1").fetchone()
+        return row[0] if row else None
+
+    def record_backup(self, timestamp: str) -> None:
+        with self.connection() as db:
+            db.execute(
+                "INSERT INTO backup_metadata(id,last_backup_at) VALUES (1,?) "
+                "ON CONFLICT(id) DO UPDATE SET last_backup_at=excluded.last_backup_at",
+                (timestamp,),
+            )
