@@ -12,7 +12,7 @@ def test_preferences_survive_restart_and_patch_retains_other_flags(tmp_path):
     store.patch_link(12, LinkLayout(showIcon=False))
     store.patch_collection(3, CollectionLayout(collapsed=True))
     prefs = StateStore(path).preferences()
-    assert prefs["links"]["12"] == {"showName": False, "showIcon": False, "showDescription": False, "order": 2}
+    assert prefs["links"]["12"] == {"showName": False, "showIcon": False, "showDescription": True, "order": 2}
     assert prefs["collections"]["3"]["collapsed"] is True
     with sqlite3.connect(path) as db:
         assert db.execute("PRAGMA user_version").fetchone()[0] == 2
@@ -33,3 +33,12 @@ def test_search_templates_persist_and_require_safe_urls_and_selected_provider(tm
 def test_layout_cannot_store_bookmark_content():
     with pytest.raises(ValueError):
         LinkLayout(name="canonical content")
+
+
+def test_delete_link_layout_removes_saved_preferences(tmp_path):
+    store = StateStore(tmp_path / "state.db")
+    store.patch_link(12, LinkLayout(showName=False))
+
+    store.delete_link(12)
+
+    assert "12" not in store.preferences()["links"]

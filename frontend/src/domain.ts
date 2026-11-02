@@ -17,12 +17,19 @@ export function safeHttpUrl(value: string): boolean {
   catch { return false }
 }
 
-export function siteFaviconUrl(value: string): string | null {
+export function siteFaviconUrl(value: string, revision = ''): string | null {
   try {
     const url = new URL(value)
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return null
-    return `${url.origin}/favicon.ico`
+    const favicon = new URL('/favicon.ico', url.origin)
+    if (revision) favicon.searchParams.set('v', revision)
+    return favicon.toString()
   } catch { return null }
+}
+
+export function siteIconUrl(linkId: number, revision = 0): string {
+  const refresh = revision ? `?refresh=1&v=${encodeURIComponent(String(revision))}` : ''
+  return `/api/links/${linkId}/icon${refresh}`
 }
 
 export function reorderLinkIds<T extends { id: number; collectionId: number }>(

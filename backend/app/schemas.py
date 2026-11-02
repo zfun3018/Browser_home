@@ -55,6 +55,18 @@ class LinkUpdate(StrictModel):
         return self
 
 
+class CaptureRequest(StrictModel):
+    url: str = Field(max_length=8192)
+    title: str = Field(default="", max_length=2048)
+    description: str = Field(default="", max_length=2048)
+    collectionId: int | None = Field(default=None, gt=0)
+
+    @field_validator("url")
+    @classmethod
+    def url_safe(cls, value):
+        return safe_url(value)
+
+
 class LinkLayout(StrictModel):
     showName: bool | None = None
     showIcon: bool | None = None
@@ -62,9 +74,41 @@ class LinkLayout(StrictModel):
     order: int | None = Field(default=None, ge=0)
 
 
+class LinkOrder(StrictModel):
+    id: int = Field(gt=0)
+    order: int = Field(ge=0)
+
+
+class LinkOrdersUpdate(StrictModel):
+    orders: list[LinkOrder] = Field(min_length=1, max_length=500)
+
+    @model_validator(mode="after")
+    def unique_ids(self):
+        ids = [entry.id for entry in self.orders]
+        if len(ids) != len(set(ids)):
+            raise ValueError("Link IDs must be unique")
+        return self
+
+
 class CollectionLayout(StrictModel):
     collapsed: bool | None = None
     order: int | None = Field(default=None, ge=0)
+
+
+class CollectionCreate(StrictModel):
+    name: str = Field(min_length=1, max_length=120)
+
+    @field_validator("name")
+    @classmethod
+    def clean_name(cls, value: str) -> str:
+        value = " ".join(value.split())
+        if not value:
+            raise ValueError("分组名称不能为空")
+        return value
+
+
+class CollectionUpdate(CollectionCreate):
+    pass
 
 
 class SearchProvider(StrictModel):

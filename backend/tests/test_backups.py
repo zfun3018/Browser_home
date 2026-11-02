@@ -44,7 +44,10 @@ class FakeBackupCoordinator:
     imported = False
 
     async def create_backup(self):
-        return {"id": self.identity}
+        return {"id": self.identity, "filename": "browser-homepage-backup-test.zip", "lastBackupAt": "2026-10-29T02:30:00Z"}
+
+    async def backup_status(self):
+        return {"lastBackupAt": "2026-10-29T02:30:00Z", "filename": "browser-homepage-backup-test.zip"}
 
     async def backup_download(self, identity):
         assert identity == self.identity
@@ -75,20 +78,16 @@ class FakeBackupCoordinator:
         return {"status": "complete", "lastBackupAt": "2026-10-29T02:30:00Z"}
 
 
-def test_backup_download_records_timestamp_only_after_stream_finishes(tmp_path):
+def test_backup_creation_records_timestamp_after_service_saves_archive(tmp_path):
     store = StateStore(tmp_path / "state.db")
     app = create_app(Settings(data_dir=tmp_path), store=store, backups=FakeBackupCoordinator())
     headers = {"origin": "http://localhost:3011"}
     with TestClient(app, base_url="http://localhost:3011", headers=headers) as client:
-        assert client.get("/api/backup/status").json() == {"lastBackupAt": None}
         created = client.post("/api/backup").json()
         assert created["id"] == FakeBackupCoordinator.identity
-        response = client.get(f"/api/backup/{created['id']}/download")
-
-        assert response.status_code == 200
-        assert response.content == b"zip-content"
-        assert response.headers["content-type"] == "application/zip"
+        assert created["filename"] == "browser-homepage-backup-test.zip"
         assert store.last_backup_at() is not None
+        assert client.get("/api/backup/status").json()["lastBackupAt"] == "2026-10-29T02:30:00Z"
 
 
 def test_backup_creation_rejects_invalid_job_id(tmp_path):
@@ -99,6 +98,19 @@ def test_backup_creation_rejects_invalid_job_id(tmp_path):
     app = create_app(Settings(data_dir=tmp_path), backups=InvalidCoordinator())
     with TestClient(app, base_url="http://localhost:3011", headers={"origin": "http://localhost:3011"}) as client:
         assert client.post("/api/backup").status_code == 502
+
+
+def test_backup_status_uses_the_local_folder_when_service_is_available(tmp_path):
+    class EmptyBackupFolder(FakeBackupCoordinator):
+        async def backup_status(self):
+            return {"lastBackupAt": None, "filename": None}
+
+    store = StateStore(tmp_path / "state.db")
+    store.record_backup("2026-10-20T00:00:00Z")
+    app = create_app(Settings(data_dir=tmp_path), store=store, backups=EmptyBackupFolder())
+
+    with TestClient(app, base_url="http://localhost:3011", headers={"origin": "http://localhost:3011"}) as client:
+        assert client.get("/api/backup/status").json()["lastBackupAt"] is None
 
 
 def test_homepage_mutations_are_paused_during_import(tmp_path):

@@ -13,7 +13,7 @@ describe('homepage backup reminder', () => {
     expect(backupIsDue('2026-10-21T23:59:59.999Z', now)).toBe(true)
   })
 
-  it('shows a backup action when status has never been recorded', async () => {
+  it('shows a compact backup status when status has never been recorded', async () => {
     vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({
       ok: true,
       status: 200,
@@ -22,12 +22,30 @@ describe('homepage backup reminder', () => {
 
     render(<BackupControls />)
 
-    expect(await screen.findByText('还没有首页备份')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '立即备份' })).toBeInTheDocument()
-    expect(screen.getByText(/明文凭据/)).toBeInTheDocument()
+    expect(await screen.findByRole('status')).toHaveTextContent('待备份')
+    expect(screen.getByRole('button', { name: '立即备份到本地文件夹' })).toBeInTheDocument()
+    expect(screen.queryByText(/明文凭据/)).not.toBeInTheDocument()
   })
 
-  it('downloads the current rollback before enabling full replacement', async () => {
+  it('saves a local backup without starting a browser download', async () => {
+    const identity = '11111111-1111-4111-8111-111111111111'
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url === '/api/backup/status') return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ lastBackupAt: null }) } as Response)
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ id: identity, filename: 'browser-homepage-backup-test.zip', lastBackupAt: '2026-10-29T02:30:00Z' }) } as Response)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const clickDownload = vi.spyOn(HTMLAnchorElement.prototype, 'click')
+    render(<BackupControls />)
+    await screen.findByRole('status')
+
+    fireEvent.click(screen.getByRole('button', { name: '立即备份到本地文件夹' }))
+    expect(await screen.findByRole('status')).toHaveTextContent('已备份')
+    expect(clickDownload).not.toHaveBeenCalled()
+    expect(fetchMock).toHaveBeenCalledWith('/api/backup', expect.objectContaining({ method: 'POST' }))
+  })
+
+  it('saves the rollback locally before enabling full replacement', async () => {
     const identity = '11111111-1111-4111-8111-111111111111'
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
       const url = String(input)
@@ -37,13 +55,10 @@ describe('homepage backup reminder', () => {
       return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ status: 'complete' }) } as Response)
     })
     vi.stubGlobal('fetch', fetchMock)
-    const clickedAnchors: HTMLAnchorElement[] = []
-    const clickDownload = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
-      clickedAnchors.push(this)
-    })
+    const clickDownload = vi.spyOn(HTMLAnchorElement.prototype, 'click')
     const onImported = vi.fn()
     render(<BackupControls onImported={onImported}/>)
-    expect(await screen.findByText('还没有首页备份')).toBeInTheDocument()
+    expect(await screen.findByRole('status')).toHaveTextContent('待备份')
 
     vi.useFakeTimers()
     fireEvent.change(screen.getByLabelText('选择备份 ZIP 文件'), { target: { files: [new File(['archive'], 'backup.zip', { type: 'application/zip' })] } })
@@ -55,9 +70,8 @@ describe('homepage backup reminder', () => {
     })
 
     expect(screen.getByRole('dialog', { name: '确认导入备份' })).toBeInTheDocument()
-    expect(clickDownload).toHaveBeenCalled()
-    const rollbackAnchor = clickedAnchors[0]
-    expect(rollbackAnchor.href).toContain(`/api/import/${identity}/rollback`)
+    expect(clickDownload).not.toHaveBeenCalled()
+    expect(screen.getByRole('status').getAttribute('title')).toContain('回滚备份已保存')
     expect(screen.getByRole('button', { name: '确认导入' })).toBeDisabled()
 
     fireEvent.click(screen.getByRole('checkbox', { name: /我确认替换当前数据/ }))

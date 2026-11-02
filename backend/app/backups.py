@@ -14,7 +14,7 @@ class BackupServiceError(Exception):
 
 
 class BackupCoordinator:
-    def __init__(self, base_url: str = "http://backup:8010"):
+    def __init__(self, base_url: str = "http://127.0.0.1:8010"):
         self.base_url = base_url.rstrip("/")
 
     @staticmethod
@@ -98,9 +98,8 @@ class BackupCoordinator:
             await client.aclose()
             raise BackupServiceError("备份服务暂时不可用") from exc
 
-    async def backup_download(self, job_id: str) -> AsyncIterator[bytes]:
-        job_id = self.validate_job_id(job_id)
-        return await self.stream(f"/internal/backups/{job_id}/download")
+    async def backup_status(self) -> dict:
+        return await self._json("GET", "/internal/backups/status")
 
     async def rollback_download(self, job_id: str) -> AsyncIterator[bytes]:
         job_id = self.validate_job_id(job_id)

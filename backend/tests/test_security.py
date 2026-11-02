@@ -22,15 +22,5 @@ def test_valid_same_origin_preferences_and_offline_health(tmp_path):
         assert client.patch("/api/links/12/layout", json={"showName": False}, headers={"origin": "http://localhost:3011"}).status_code == 200
         response = client.get("/api/home")
         assert response.status_code == 200
-        assert response.json()["sync"]["status"] == "error"
+        assert response.json()["sync"]["status"] == "ok"
         assert response.json()["preferences"]["links"]["12"]["showName"] is False
-
-
-def test_token_is_read_only_from_configured_file(tmp_path, monkeypatch):
-    token = tmp_path / "token"
-    token.write_text("file-token\n")
-    monkeypatch.setenv("LINKWARDEN_API_TOKEN", "must-not-use")
-    monkeypatch.delenv("LINKWARDEN_API_TOKEN_FILE", raising=False)
-    assert Settings.from_env().read_token() is None
-    monkeypatch.setenv("LINKWARDEN_API_TOKEN_FILE", str(token))
-    assert Settings.from_env().read_token() == "file-token"

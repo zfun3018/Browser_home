@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Check, Download, FileUp, LoaderCircle, X } from 'lucide-react'
+import { Check, FileUp, HardDriveDownload, LoaderCircle, X } from 'lucide-react'
 import './backup.css'
 
 type BackupStatus = { lastBackupAt: string | null }
-type BackupJob = { id: string; filename: string }
-type ImportJob = { id: string; manifest: { createdAt: string; applicationVersion?: string } }
+type BackupJob = { id: string; filename: string; lastBackupAt: string }
+type ImportJob = { id: string; manifest: { createdAt: string; applicationVersion?: string }; rollbackFilename?: string }
 type ImportStatus = { status: string; rollbackDelivered: boolean; error?: string | null }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -46,29 +46,20 @@ export default function BackupControls({ onImported }: { onImported?: () => void
     void refreshStatus()
     const focus = () => { void refreshStatus() }
     window.addEventListener('focus', focus)
-    return () => window.removeEventListener('focus', focus)
+    const timer = window.setInterval(focus, 5 * 60 * 1000)
+    return () => {
+      window.removeEventListener('focus', focus)
+      window.clearInterval(timer)
+    }
   }, [refreshStatus])
 
   async function backup() {
     setBusy(true)
     setError('')
     try {
-      const previous = lastBackupAt
       const job = await request<BackupJob>('/api/backup', { method: 'POST', body: '{}' })
-      const anchor = document.createElement('a')
-      anchor.href = `/api/backup/${encodeURIComponent(job.id)}/download`
-      anchor.download = job.filename
-      anchor.hidden = true
-      document.body.append(anchor)
-      anchor.click()
-      anchor.remove()
-
-      for (let attempt = 0; attempt < 360; attempt += 1) {
-        await new Promise(resolve => window.setTimeout(resolve, 1000))
-        const next = await refreshStatus()
-        if (next && next !== previous) return
-      }
-      throw new Error('备份尚未完成，请检查浏览器下载状态后重试')
+      setLastBackupAt(job.lastBackupAt)
+      setImportStatus(`已保存：${job.filename}`)
     } catch (err) {
       setError(err instanceof Error ? err.message : '备份失败，请稍后重试')
     } finally {
@@ -92,27 +83,20 @@ export default function BackupControls({ onImported }: { onImported?: () => void
       if (!response.ok) throw new Error(typeof body.detail === 'string' ? body.detail : '备份校验失败')
       const job = body as ImportJob
       setImportJob(job)
-      setImportStatus('正在下载当前数据的回滚备份…')
-      const anchor = document.createElement('a')
-      anchor.href = `/api/import/${encodeURIComponent(job.id)}/rollback`
-      anchor.download = 'browser-homepage-rollback.zip'
-      anchor.hidden = true
-      document.body.append(anchor)
-      anchor.click()
-      anchor.remove()
+      setImportStatus('正在将回滚备份写入本地文件夹…')
 
       for (let attempt = 0; attempt < 360; attempt += 1) {
         await new Promise(resolve => window.setTimeout(resolve, 1000))
         const status = await request<ImportStatus>(`/api/import/${encodeURIComponent(job.id)}/status`)
         if (status.status === 'ready_to_commit' && status.rollbackDelivered) {
-          setImportStatus('当前数据的回滚备份已下载')
+          setImportStatus(`回滚备份已保存${job.rollbackFilename ? `：${job.rollbackFilename}` : '到本地文件夹'}`)
           setConfirmReplace(true)
           setBusy(false)
           return
         }
         if (status.status === 'failed') throw new Error(status.error || '导入准备失败')
       }
-      throw new Error('回滚备份下载未完成，请检查浏览器下载状态')
+      throw new Error('回滚备份写入本地文件夹未完成，请检查备份服务状态')
     } catch (err) {
       setError(err instanceof Error ? err.message : '导入准备失败')
       setImportStatus('')
@@ -151,27 +135,25 @@ export default function BackupControls({ onImported }: { onImported?: () => void
   }
 
   const due = backupIsDue(lastBackupAt)
-  return <section className={`backup-banner${due ? ' backup-banner-due' : ' backup-banner-current'}`} aria-label="首页备份">
-    <div className="backup-copy" role="status" aria-live="polite">
-      <strong>{due ? (lastBackupAt ? '首页备份已超过 7 天' : '还没有首页备份') : `最近备份：${new Date(lastBackupAt!).toLocaleString()}`}</strong>
-      <span>{error || importStatus || '备份包括 Linkwarden 数据和明文凭据，请像保管密码文件一样保护下载文件。'}</span>
+  return <section className="backup-widget" aria-label="首页备份">
+    <div className={`backup-status${due ? ' backup-status-due' : ''}${error ? ' backup-status-error' : ''}`} role="status" aria-live="polite" title={error || importStatus || (lastBackupAt ? `最近备份：${new Date(lastBackupAt).toLocaleString()}` : '尚无备份；自动备份每周执行一次')}>
+      <i aria-hidden="true"/>
+      <span>{busy ? '备份中' : due ? '待备份' : `已备份 ${new Date(lastBackupAt!).toLocaleDateString()}`}</span>
     </div>
     <div className="backup-actions">
-      <button className="backup-button" onClick={() => void backup()} disabled={busy}>
-        {busy ? <LoaderCircle className="spin" size={15}/> : <Download size={15}/>}
-        {busy ? '处理中…' : '立即备份'}
+      <button className="backup-button" aria-label="立即备份到本地文件夹" title="立即备份到本地文件夹（ZIP 含明文凭据）" onClick={() => void backup()} disabled={busy}>
+        {busy ? <LoaderCircle className="spin" size={14}/> : <HardDriveDownload size={14}/>}
       </button>
-      <button className="backup-button" onClick={() => fileRef.current?.click()} disabled={busy}>
-        {busy ? <LoaderCircle className="spin" size={15}/> : <FileUp size={15}/>}
-        导入备份
+      <button className="backup-button" aria-label="导入备份" title="导入备份" onClick={() => fileRef.current?.click()} disabled={busy}>
+        {busy ? <LoaderCircle className="spin" size={14}/> : <FileUp size={14}/>}
       </button>
       <input ref={fileRef} className="backup-file-input" type="file" accept=".zip,application/zip" aria-label="选择备份 ZIP 文件" onChange={event => void chooseImport(event.target.files?.[0])}/>
     </div>
     {confirmReplace && importJob && <div className="modal-backdrop" role="presentation"><section className="dialog import-dialog" role="dialog" aria-modal="true" aria-labelledby="import-title">
       <div className="dialog-heading"><div><span className="dialog-kicker">RESTORE DATA</span><h2 id="import-title">确认导入备份</h2></div><button className="icon-button" aria-label="关闭" onClick={cancelImport}><X size={18}/></button></div>
       <p>备份生成时间：{new Date(importJob.manifest.createdAt).toLocaleString()}</p>
-      <p>将整体替换 Linkwarden 收藏和附件、首页设置、Obsidian 笔记及笔记冲突副本。当前部署配置、密码和 Token 保持不变。</p>
-      <p className="import-warning">当前数据回滚包已下载到电脑。备份文件含明文密码和 Token，请妥善保管。</p>
+      <p>将整体替换本地书签、首页设置、Obsidian 笔记及笔记冲突副本。当前部署配置和密码保持不变。</p>
+      <p className="import-warning">当前数据的回滚包已保存到本机备份文件夹。备份文件含明文密码和 Token，请妥善保管。</p>
       <label className="import-confirm"><input type="checkbox" checked={confirmed} onChange={event => setConfirmed(event.target.checked)}/><span>我确认替换当前数据</span></label>
       <div className="dialog-actions"><button className="secondary-button" onClick={cancelImport}>取消</button><button className="primary-button" onClick={() => void commitImport()} disabled={!confirmed || busy}><Check size={15}/>确认导入</button></div>
     </section></div>}

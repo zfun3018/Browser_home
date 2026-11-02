@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import sqlite3
 
-from .schemas import CollectionLayout, LinkLayout, SearchSettings
+from .schemas import CollectionLayout, LinkLayout, LinkOrder, SearchSettings
 
 
 class StateStore:
@@ -46,10 +46,30 @@ class StateStore:
             return value
 
     def patch_link(self, identity: int, update: LinkLayout):
-        return self._patch("link_layout", identity, update, {"showName": True, "showIcon": True, "showDescription": False, "order": 0})
+        return self._patch("link_layout", identity, update, {"showName": True, "showIcon": True, "showDescription": True, "order": identity})
+
+    def patch_link_orders(self, orders: list[LinkOrder]):
+        defaults = {"showName": True, "showIcon": True, "showDescription": True}
+        saved = {}
+        with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            for entry in orders:
+                row = db.execute("SELECT value FROM link_layout WHERE id=?", (entry.id,)).fetchone()
+                value = {**defaults, "order": entry.id, **(json.loads(row[0]) if row else {}), "order": entry.order}
+                db.execute("INSERT INTO link_layout(id,value) VALUES (?,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value", (entry.id, json.dumps(value)))
+                saved[str(entry.id)] = value
+        return saved
 
     def patch_collection(self, identity: int, update: CollectionLayout):
-        return self._patch("collection_layout", identity, update, {"collapsed": False, "order": 0})
+        return self._patch("collection_layout", identity, update, {"collapsed": False, "order": identity})
+
+    def delete_collection(self, identity: int) -> None:
+        with self.connection() as db:
+            db.execute("DELETE FROM collection_layout WHERE id=?", (identity,))
+
+    def delete_link(self, identity: int) -> None:
+        with self.connection() as db:
+            db.execute("DELETE FROM link_layout WHERE id=?", (identity,))
 
     def search(self):
         with self.connection() as db:

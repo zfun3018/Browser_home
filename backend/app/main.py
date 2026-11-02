@@ -2,18 +2,22 @@ from pathlib import Path as FilePath
 from datetime import datetime, timezone
 import asyncio
 import os
+import inspect
+import secrets
 from urllib.parse import urlsplit
 
-from fastapi import FastAPI, Request, Path, HTTPException
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi import FastAPI, Request, Path, HTTPException, Query
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 
 from .backups import BackupCoordinator, BackupServiceError
+from .bookmark_store import BookmarkStoreError, SqliteBookmarkStore
 from .config import Settings
-from .linkwarden_client import LinkwardenClient, LinkwardenError
+from .metadata import MetadataFetchError, fetch_public_metadata
 from .notes import NoteConflict, NoteStore, NoteUnavailable
-from .schemas import CollectionLayout, LinkLayout, LinkUpdate, SearchSettings
+from .schemas import CaptureRequest, CollectionCreate, CollectionLayout, CollectionUpdate, LinkLayout, LinkOrdersUpdate, LinkUpdate, SearchSettings
+from .site_assets import MAX_CUSTOM_ICON_BYTES, NEGATIVE_CACHE_TTL_SECONDS, SiteAssetService, SiteIconNotFound, validate_icon_payload
 from .state_store import StateStore
 
 
@@ -23,14 +27,19 @@ class NoteWrite(BaseModel):
     expectedHash: str = Field(pattern=r"^[a-f0-9]{64}$")
 
 
-def create_app(settings: Settings | None = None, linkwarden=None, store=None, note_store=None, backups=None):
+async def _maybe_await(value):
+    return await value if inspect.isawaitable(value) else value
+
+
+def create_app(settings: Settings | None = None, bookmarks=None, store=None, note_store=None, backups=None):
     settings = settings or Settings.from_env()
     app = FastAPI(title="Personal Homepage", docs_url=None, redoc_url=None)
     app.state.settings = settings
     app.state.store = store or StateStore(settings.data_dir / "state.db")
-    app.state.linkwarden = linkwarden or LinkwardenClient(settings.linkwarden_url, settings.read_token())
-    app.state.notes = note_store or NoteStore(FilePath("/app/data/浏览器首页笔记.md"), settings.data_dir / "note-conflicts")
+    app.state.bookmarks = bookmarks or SqliteBookmarkStore(settings.bookmark_db_path)
+    app.state.notes = note_store or NoteStore(settings.obsidian_note_path, settings.data_dir / "note-conflicts")
     app.state.backups = backups or BackupCoordinator(settings.backup_service_url)
+    app.state.site_assets = SiteAssetService(settings.data_dir / "site-icons")
     app.state.import_committing = False
     app.state.import_lock = asyncio.Lock()
 
@@ -40,6 +49,8 @@ def create_app(settings: Settings | None = None, linkwarden=None, store=None, no
 
     @app.middleware("http")
     async def same_origin(request: Request, call_next):
+        if request.url.path == "/api/capture":
+            return await call_next(request)
         if request.method not in ("GET", "HEAD", "OPTIONS"):
             origin = request.headers.get("origin")
             host = request.headers.get("host")
@@ -49,11 +60,12 @@ def create_app(settings: Settings | None = None, linkwarden=None, store=None, no
                 return JSONResponse({"detail": "Same-origin request required"}, status_code=403)
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["Cache-Control"] = "no-store"
+        if "cache-control" not in response.headers:
+            response.headers["Cache-Control"] = "no-store"
         return response
 
-    @app.exception_handler(LinkwardenError)
-    async def upstream_error(request, error):
+    @app.exception_handler(BookmarkStoreError)
+    async def bookmark_store_error(request, error):
         return JSONResponse({"detail": str(error)}, status_code=error.status_code)
 
     @app.get("/health")
@@ -61,8 +73,15 @@ def create_app(settings: Settings | None = None, linkwarden=None, store=None, no
         return {"status": "ok"}
 
     @app.get("/api/backup/status")
-    def backup_status():
-        return {"lastBackupAt": app.state.store.last_backup_at()}
+    async def backup_status():
+        try:
+            status = await app.state.backups.backup_status()
+            timestamp = status.get("lastBackupAt") if "lastBackupAt" in status else app.state.store.last_backup_at()
+            if timestamp and timestamp != app.state.store.last_backup_at():
+                app.state.store.record_backup(timestamp)
+            return {"lastBackupAt": timestamp, "filename": status.get("filename")}
+        except BackupServiceError:
+            return {"lastBackupAt": app.state.store.last_backup_at(), "filename": None}
 
     @app.post("/api/backup")
     async def create_backup():
@@ -71,24 +90,12 @@ def create_app(settings: Settings | None = None, linkwarden=None, store=None, no
             identity = BackupCoordinator.validate_job_id(result["id"])
         except (BackupServiceError, KeyError, ValueError) as error:
             raise HTTPException(status_code=502, detail=str(error) if isinstance(error, BackupServiceError) else "备份服务返回无效任务") from error
-        filename = f"browser-homepage-backup-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}.zip"
-        return {"id": identity, "filename": filename}
-
-    @app.get("/api/backup/{identity}/download")
-    async def download_backup(identity: str = Path()):
-        try:
-            stream = await app.state.backups.backup_download(identity)
-        except BackupServiceError as error:
-            raise HTTPException(status_code=502, detail=str(error)) from error
-
-        async def complete_stream():
-            async for chunk in stream:
-                yield chunk
-            timestamp = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
-            app.state.store.record_backup(timestamp)
-
-        filename = f"browser-homepage-backup-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}.zip"
-        return StreamingResponse(complete_stream(), media_type="application/zip", headers={"Content-Disposition": f'attachment; filename="{filename}"'})
+        timestamp = result.get("lastBackupAt") or datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+        filename = result.get("filename")
+        if not isinstance(filename, str) or not filename.endswith(".zip") or "/" in filename or "\\" in filename:
+            raise HTTPException(status_code=502, detail="备份服务返回无效文件名")
+        app.state.store.record_backup(timestamp)
+        return {"id": identity, "filename": filename, "lastBackupAt": timestamp}
 
     @app.post("/api/import/prepare")
     async def prepare_import(request: Request):
@@ -148,6 +155,17 @@ def create_app(settings: Settings | None = None, linkwarden=None, store=None, no
         except BackupServiceError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
 
+    @app.post("/api/capture", status_code=201)
+    async def capture(request: CaptureRequest, http_request: Request):
+        expected = settings.read_capture_token()
+        provided = http_request.headers.get("x-capture-token", "")
+        if not expected or not provided or not secrets.compare_digest(provided, expected):
+            raise HTTPException(status_code=401, detail="Capture token required")
+        link = await _maybe_await(app.state.bookmarks.capture(
+            request.url, request.title, request.description, request.collectionId,
+        ))
+        return {"id": link["id"], "created": True, "link": link}
+
     @app.get("/api/notes")
     def get_note():
         try:
@@ -174,18 +192,119 @@ def create_app(settings: Settings | None = None, linkwarden=None, store=None, no
     @app.get("/api/home")
     async def home():
         try:
-            collections = await app.state.linkwarden.collections()
-            links = await app.state.linkwarden.links()
+            collections = await _maybe_await(app.state.bookmarks.collections())
+            links = await _maybe_await(app.state.bookmarks.links())
             sync = {"status": "ok"}
-        except LinkwardenError as error:
+        except BookmarkStoreError as error:
             collections, links = [], []
             sync = {"status": "error", "message": str(error)}
         return {"collections": collections, "links": links, "preferences": app.state.store.preferences(), "sync": sync}
 
+    @app.patch("/api/links/layouts")
+    def link_layouts(update: LinkOrdersUpdate):
+        reject_during_import()
+        return {"layouts": app.state.store.patch_link_orders(update.orders)}
+
+    @app.post("/api/collections", status_code=201)
+    def create_collection(values: CollectionCreate):
+        reject_during_import()
+        return app.state.bookmarks.create_collection(values)
+
+    @app.get("/api/collections")
+    async def list_collections():
+        return await _maybe_await(app.state.bookmarks.collections())
+
+    @app.patch("/api/collections/{identity}")
+    def update_collection(values: CollectionUpdate, identity: int = Path(gt=0)):
+        reject_during_import()
+        return app.state.bookmarks.update_collection(identity, values)
+
+    @app.delete("/api/collections/{identity}", status_code=204)
+    def delete_collection(identity: int = Path(gt=0)):
+        reject_during_import()
+        app.state.bookmarks.delete_collection(identity)
+        app.state.store.delete_collection(identity)
+        return Response(status_code=204)
+
     @app.patch("/api/links/{identity}")
     async def update_link(update: LinkUpdate, identity: int = Path(gt=0)):
         reject_during_import()
-        return await app.state.linkwarden.update(identity, update)
+        return await _maybe_await(app.state.bookmarks.update(identity, update))
+
+    @app.delete("/api/links/{identity}", status_code=204)
+    async def delete_link(identity: int = Path(gt=0)):
+        reject_during_import()
+        await _maybe_await(app.state.bookmarks.delete(identity))
+        app.state.store.delete_link(identity)
+        return Response(status_code=204)
+
+    @app.post("/api/links/{identity}/metadata")
+    async def link_metadata(identity: int = Path(gt=0)):
+        reject_during_import()
+        try:
+            link = await _maybe_await(app.state.bookmarks.get(identity))
+            return await fetch_public_metadata(link["url"])
+        except MetadataFetchError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.get("/api/links/{identity}/icon")
+    async def link_icon(identity: int = Path(gt=0), refresh: bool = False):
+        reject_during_import()
+        try:
+            link = await _maybe_await(app.state.bookmarks.get(identity))
+            custom = await _maybe_await(app.state.bookmarks.custom_icon(identity))
+            if custom:
+                data, content_type = custom
+                return Response(content=data, media_type=content_type, headers={"Cache-Control": "private, max-age=3600", "Content-Security-Policy": "default-src 'none'; sandbox", "X-Content-Type-Options": "nosniff"})
+            data, content_type = await app.state.site_assets.get_icon(link["url"], refresh=refresh)
+            await _maybe_await(app.state.bookmarks.save_custom_icon(identity, data, content_type))
+            return Response(
+                content=data,
+                media_type=content_type,
+                headers={
+                    "Cache-Control": "private, max-age=3600",
+                    "Content-Security-Policy": "default-src 'none'; sandbox",
+                    "X-Content-Type-Options": "nosniff",
+                },
+            )
+        except SiteIconNotFound as error:
+            return Response(
+                status_code=404,
+                headers={"Cache-Control": f"private, max-age={NEGATIVE_CACHE_TTL_SECONDS}"},
+            )
+        except MetadataFetchError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+
+    @app.put("/api/links/{identity}/icon/custom")
+    async def save_custom_icon(request: Request, identity: int = Path(gt=0)):
+        reject_during_import()
+        data = await request.body()
+        try:
+            content_type = validate_icon_payload(request.headers.get("content-type", ""), data)
+        except ValueError as error:
+            raise HTTPException(status_code=415, detail=str(error)) from error
+        if len(data) > MAX_CUSTOM_ICON_BYTES:
+            raise HTTPException(status_code=413, detail="图标文件不能超过 4 MB")
+        await _maybe_await(app.state.bookmarks.save_custom_icon(identity, data, content_type))
+        return {"contentType": content_type, "bytes": len(data)}
+
+    @app.post("/api/links/{identity}/icon/fetch")
+    async def fetch_and_save_icon(identity: int = Path(gt=0)):
+        reject_during_import()
+        link = await _maybe_await(app.state.bookmarks.get(identity))
+        try:
+            data, content_type = await app.state.site_assets.get_icon(link["url"], refresh=True)
+            content_type = validate_icon_payload(content_type, data)
+        except (SiteIconNotFound, MetadataFetchError) as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        await _maybe_await(app.state.bookmarks.save_custom_icon(identity, data, content_type))
+        return {"contentType": content_type, "bytes": len(data)}
+
+    @app.patch("/api/links/{identity}/icon/size")
+    async def save_icon_size(size: int = Query(ge=24, le=96), identity: int = Path(gt=0)):
+        reject_during_import()
+        saved = await _maybe_await(app.state.bookmarks.save_icon_size(identity, size))
+        return {"size": saved}
 
     @app.patch("/api/links/{identity}/layout")
     def link_layout(update: LinkLayout, identity: int = Path(gt=0)):
@@ -206,8 +325,8 @@ def create_app(settings: Settings | None = None, linkwarden=None, store=None, no
         reject_during_import()
         return app.state.store.save_search(settings)
 
-    # In the container, serve the production React build from the same origin as
-    # the API. Keeping this optional leaves the test/dev API-only app unchanged.
+    # Serve the production React build from the same origin as the API when configured.
+    # Keeping this optional leaves the test/dev API-only app unchanged.
     static_dir = os.environ.get("HOMEPAGE_STATIC_DIR")
     if static_dir and FilePath(static_dir).is_dir():
         app.mount("/", StaticFiles(directory=static_dir, html=True), name="homepage-static")
