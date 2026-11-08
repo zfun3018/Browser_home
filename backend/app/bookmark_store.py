@@ -30,6 +30,7 @@ def _map_link(row: sqlite3.Row) -> dict:
         "color": row["color"],
         "iconSize": row["custom_icon_size"],
         "collectionId": row["collection_id"],
+        "createdAt": row["created_at"] if "created_at" in row.keys() else None,
     }
 
 
@@ -109,18 +110,33 @@ class SqliteBookmarkStore:
                 raise BookmarkStoreError("请先将分组内的网址移动到其他分组", 409)
             db.execute("DELETE FROM bookmark_collections WHERE id=?", (identity,))
 
-    def links(self) -> list[dict]:
+    def link_counts(self) -> dict[int, int]:
         with self.connection() as db:
-            rows = db.execute(
-                "SELECT id, name, url, description, icon, icon_weight, color, custom_icon_size, collection_id "
-                "FROM bookmarks ORDER BY id"
-            ).fetchall()
+            rows = db.execute("SELECT collection_id, COUNT(*) AS count FROM bookmarks GROUP BY collection_id").fetchall()
+        return {int(row["collection_id"]): int(row["count"]) for row in rows}
+
+    def links(self, exclude_collection_ids: set[int] | None = None, include_collection_ids: set[int] | None = None) -> list[dict]:
+        with self.connection() as db:
+            query = "SELECT id, name, url, description, icon, icon_weight, color, custom_icon_size, collection_id, created_at FROM bookmarks"
+            params: tuple[int, ...] = ()
+            clauses: list[str] = []
+            if exclude_collection_ids:
+                placeholders = ",".join("?" for _ in exclude_collection_ids)
+                clauses.append(f"collection_id NOT IN ({placeholders})")
+                params += tuple(sorted(exclude_collection_ids))
+            if include_collection_ids:
+                placeholders = ",".join("?" for _ in include_collection_ids)
+                clauses.append(f"collection_id IN ({placeholders})")
+                params += tuple(sorted(include_collection_ids))
+            if clauses:
+                query += " WHERE " + " AND ".join(clauses)
+            rows = db.execute(query + " ORDER BY id", params).fetchall()
         return [_map_link(row) for row in rows]
 
     def get(self, identity: int) -> dict:
         with self.connection() as db:
             row = db.execute(
-                "SELECT id, name, url, description, icon, icon_weight, color, custom_icon_size, collection_id "
+                "SELECT id, name, url, description, icon, icon_weight, color, custom_icon_size, collection_id, created_at "
                 "FROM bookmarks WHERE id=?", (identity,)
             ).fetchone()
         if row is None:
@@ -178,7 +194,7 @@ class SqliteBookmarkStore:
             if not self._collection_exists(db, target):
                 raise BookmarkStoreError("Target collection does not exist", 404)
             existing = db.execute(
-                "SELECT id, name, url, description, icon, icon_weight, color, custom_icon_size, collection_id "
+                "SELECT id, name, url, description, icon, icon_weight, color, custom_icon_size, collection_id, created_at "
                 "FROM bookmarks WHERE url=? AND collection_id=? ORDER BY id LIMIT 1", (url, target)
             ).fetchone()
             if existing:
@@ -189,7 +205,7 @@ class SqliteBookmarkStore:
             )
             identity = int(db.execute("SELECT last_insert_rowid()").fetchone()[0])
             row = db.execute(
-                "SELECT id, name, url, description, icon, icon_weight, color, custom_icon_size, collection_id "
+                "SELECT id, name, url, description, icon, icon_weight, color, custom_icon_size, collection_id, created_at "
                 "FROM bookmarks WHERE id=?", (identity,)
             ).fetchone()
         return _map_link(row)
@@ -199,7 +215,7 @@ class SqliteBookmarkStore:
         with self.connection() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute(
-                "SELECT id, name, url, description, icon, icon_weight, color, custom_icon_size, collection_id "
+                "SELECT id, name, url, description, icon, icon_weight, color, custom_icon_size, collection_id, created_at "
                 "FROM bookmarks WHERE id=?", (identity,)
             ).fetchone()
             if row is None:
@@ -219,7 +235,7 @@ class SqliteBookmarkStore:
                 values.append(identity)
                 db.execute(f"UPDATE bookmarks SET {', '.join(assignments)} WHERE id=?", values)
             updated = db.execute(
-                "SELECT id, name, url, description, icon, icon_weight, color, custom_icon_size, collection_id "
+                "SELECT id, name, url, description, icon, icon_weight, color, custom_icon_size, collection_id, created_at "
                 "FROM bookmarks WHERE id=?", (identity,)
             ).fetchone()
         return _map_link(updated)

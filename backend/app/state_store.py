@@ -1,7 +1,10 @@
 """SQLite stores presentation and search only, never canonical bookmarks."""
 from contextlib import contextmanager
+import base64
+import hashlib
 import json
 from pathlib import Path
+import secrets
 import sqlite3
 
 from .schemas import CollectionLayout, LinkLayout, LinkOrder, SearchSettings
@@ -13,7 +16,7 @@ class StateStore:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.connection() as db:
             version = db.execute("PRAGMA user_version").fetchone()[0]
-            if version > 2:
+            if version > 3:
                 raise RuntimeError("Unsupported preferences schema version")
             db.executescript("""
                 CREATE TABLE IF NOT EXISTS link_layout (id INTEGER PRIMARY KEY, value TEXT NOT NULL);
@@ -22,7 +25,8 @@ class StateStore:
             """)
             if version < 2:
                 db.execute("CREATE TABLE IF NOT EXISTS backup_metadata (id INTEGER PRIMARY KEY CHECK(id=1), last_backup_at TEXT)")
-                db.execute("PRAGMA user_version=2")
+            if version < 3:
+                db.execute("PRAGMA user_version=3")
 
     @contextmanager
     def connection(self):
@@ -35,7 +39,18 @@ class StateStore:
 
     def preferences(self) -> dict:
         with self.connection() as db:
-            return {key: {str(row[0]): json.loads(row[1]) for row in db.execute(f"SELECT id,value FROM {table}")} for key, table in (("links", "link_layout"), ("collections", "collection_layout"))}
+            links = {str(row[0]): json.loads(row[1]) for row in db.execute("SELECT id,value FROM link_layout")}
+            collections = {str(row[0]): self._public_collection_layout(json.loads(row[1])) for row in db.execute("SELECT id,value FROM collection_layout")}
+        return {"links": links, "collections": collections}
+
+    @staticmethod
+    def _public_collection_layout(value: dict) -> dict:
+        return {
+            "collapsed": bool(value.get("collapsed", False)),
+            "order": int(value.get("order", 0)),
+            "displayMode": value.get("displayMode", "grid") if value.get("displayMode", "grid") in ("grid", "list") else "grid",
+            "locked": bool(value.get("passwordHash") and value.get("passwordSalt")),
+        }
 
     def _patch(self, table, identity, update, defaults):
         with self.connection() as db:
@@ -61,7 +76,58 @@ class StateStore:
         return saved
 
     def patch_collection(self, identity: int, update: CollectionLayout):
-        return self._patch("collection_layout", identity, update, {"collapsed": False, "order": identity})
+        value = self._patch("collection_layout", identity, update, {"collapsed": False, "order": identity, "displayMode": "grid"})
+        return self._public_collection_layout(value)
+
+    def collection_is_locked(self, identity: int) -> bool:
+        with self.connection() as db:
+            row = db.execute("SELECT value FROM collection_layout WHERE id=?", (identity,)).fetchone()
+        if not row:
+            return False
+        value = json.loads(row[0])
+        return bool(value.get("passwordHash") and value.get("passwordSalt"))
+
+    def set_collection_password(self, identity: int, password: str) -> dict:
+        salt = secrets.token_bytes(16)
+        iterations = 120_000
+        digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+        with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT value FROM collection_layout WHERE id=?", (identity,)).fetchone()
+            value = {"collapsed": False, "order": identity, "displayMode": "grid", **(json.loads(row[0]) if row else {})}
+            value.update({
+                "passwordVersion": 1,
+                "passwordIterations": iterations,
+                "passwordSalt": base64.b64encode(salt).decode("ascii"),
+                "passwordHash": base64.b64encode(digest).decode("ascii"),
+            })
+            db.execute("INSERT INTO collection_layout(id,value) VALUES (?,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value", (identity, json.dumps(value)))
+        return self._public_collection_layout(value)
+
+    def clear_collection_password(self, identity: int) -> dict:
+        with self.connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT value FROM collection_layout WHERE id=?", (identity,)).fetchone()
+            value = {"collapsed": False, "order": identity, "displayMode": "grid", **(json.loads(row[0]) if row else {})}
+            for key in ("passwordVersion", "passwordIterations", "passwordSalt", "passwordHash"):
+                value.pop(key, None)
+            db.execute("INSERT INTO collection_layout(id,value) VALUES (?,?) ON CONFLICT(id) DO UPDATE SET value=excluded.value", (identity, json.dumps(value)))
+        return self._public_collection_layout(value)
+
+    def verify_collection_password(self, identity: int, password: str) -> bool:
+        with self.connection() as db:
+            row = db.execute("SELECT value FROM collection_layout WHERE id=?", (identity,)).fetchone()
+        if not row:
+            return False
+        value = json.loads(row[0])
+        try:
+            salt = base64.b64decode(value["passwordSalt"], validate=True)
+            expected = base64.b64decode(value["passwordHash"], validate=True)
+            iterations = int(value.get("passwordIterations", 120_000))
+        except (KeyError, ValueError, TypeError):
+            return False
+        actual = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, iterations)
+        return secrets.compare_digest(actual, expected)
 
     def delete_collection(self, identity: int) -> None:
         with self.connection() as db:

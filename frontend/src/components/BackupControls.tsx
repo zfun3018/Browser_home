@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Check, FileUp, HardDriveDownload, LoaderCircle, X } from 'lucide-react'
+import { Check, LoaderCircle, X } from 'lucide-react'
+import MaterialIcon from './MaterialIcon'
 import './backup.css'
 
 type BackupStatus = { lastBackupAt: string | null }
@@ -135,17 +136,19 @@ export default function BackupControls({ onImported }: { onImported?: () => void
   }
 
   const due = backupIsDue(lastBackupAt)
+  const reminder = !lastBackupAt ? '尚未备份' : '超过一周未备份，请立即备份'
   return <section className="backup-widget" aria-label="首页备份">
-    <div className={`backup-status${due ? ' backup-status-due' : ''}${error ? ' backup-status-error' : ''}`} role="status" aria-live="polite" title={error || importStatus || (lastBackupAt ? `最近备份：${new Date(lastBackupAt).toLocaleString()}` : '尚无备份；自动备份每周执行一次')}>
+    <div className={`backup-status${due ? ' backup-status-due' : ''}${error ? ' backup-status-error' : ''}`} role="status" aria-live="polite" title={error || importStatus || (due ? reminder : `最近备份：${new Date(lastBackupAt!).toLocaleString()}`)}>
       <i aria-hidden="true"/>
-      <span>{busy ? '备份中' : due ? '待备份' : `已备份 ${new Date(lastBackupAt!).toLocaleDateString()}`}</span>
+      <span className="backup-status-label">{busy ? '备份中' : due ? reminder : `已备份 ${new Date(lastBackupAt!).toLocaleDateString()}`}</span>
+      {due && !busy && <span className="backup-status-short">需备份</span>}
     </div>
     <div className="backup-actions">
       <button className="backup-button" aria-label="立即备份到本地文件夹" title="立即备份到本地文件夹（ZIP 含明文凭据）" onClick={() => void backup()} disabled={busy}>
-        {busy ? <LoaderCircle className="spin" size={14}/> : <HardDriveDownload size={14}/>}
+        {busy ? <LoaderCircle className="spin" size={14}/> : <MaterialIcon name="download" />}
       </button>
       <button className="backup-button" aria-label="导入备份" title="导入备份" onClick={() => fileRef.current?.click()} disabled={busy}>
-        {busy ? <LoaderCircle className="spin" size={14}/> : <FileUp size={14}/>}
+        {busy ? <LoaderCircle className="spin" size={14}/> : <MaterialIcon name="file_upload" />}
       </button>
       <input ref={fileRef} className="backup-file-input" type="file" accept=".zip,application/zip" aria-label="选择备份 ZIP 文件" onChange={event => void chooseImport(event.target.files?.[0])}/>
     </div>

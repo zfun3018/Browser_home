@@ -36,7 +36,7 @@ describe('homepage interactions', () => {
     await user.click(screen.getByRole('button', { name: /收起 工作/ }))
     expect(link).not.toBeVisible()
     expect(screen.getByRole('button', { name: /展开 工作/ })).toHaveAttribute('aria-expanded', 'false')
-    expect(vi.mocked(fetch)).toHaveBeenCalledWith('/api/collections/3/layout', expect.objectContaining({ body: JSON.stringify({ collapsed: true }) }))
+    expect(vi.mocked(fetch).mock.calls.some(([input]) => String(input).includes('/api/collections/3/layout'))).toBe(false)
   })
 
   it('keeps a collapsed collection in its current position when saving its first preference', async () => {
@@ -55,7 +55,7 @@ describe('homepage interactions', () => {
 
     await user.click(screen.getByRole('button', { name: '收起 收件箱' }))
 
-    expect(fetchMock).toHaveBeenCalledWith('/api/collections/7/layout', expect.objectContaining({ body: JSON.stringify({ collapsed: true }) }))
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes('/api/collections/7/layout'))).toBe(false)
     expect(screen.getAllByRole('button', { name: /收起|展开/ }).map(button => button.getAttribute('aria-label'))).toEqual(['收起 工作', '展开 收件箱'])
   })
 

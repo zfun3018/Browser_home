@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>收藏到浏览器首页</title>
+  <style>
+    :root{font:14px system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;color:#243026;background:#f5f7f2}
+    *{box-sizing:border-box}body{width:340px;margin:0;padding:18px;background:linear-gradient(145deg,#f5f8f2,#e7eee4);}
+    .brand{display:flex;align-items:center;gap:10px;margin-bottom:17px}.brand-mark{display:grid;place-items:center;width:34px;height:34px;border-radius:11px;background:#45664e;color:#fff;box-shadow:0 5px 12px #45664e35}.brand h1{font-size:15px;margin:0;font-weight:700}.brand p{margin:3px 0 0;color:#7b867b;font-size:11px}
+    .card{padding:14px;border:1px solid #dce5d9;border-radius:14px;background:#ffffffc9;box-shadow:0 10px 28px #31472b12}.page-title{font-size:12px;color:#536153;line-height:1.5;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin:0 0 13px}
+    label{display:block;color:#687468;font-size:11px;margin:0 0 6px}input[type="text"],input[type="url"],select{width:100%;height:38px;border:1px solid #ccd9ca;border-radius:9px;padding:0 10px;background:#fff;color:#243026;outline:none}input[type="text"]:focus,input[type="url"]:focus,select:focus{border-color:#789579;box-shadow:0 0 0 3px #7895791c}.field{margin-bottom:11px}
+    .default-row{display:flex;align-items:center;gap:7px;margin:11px 0 14px;color:#6d786c;font-size:11px}.default-row input{accent-color:#45664e}
+    button{width:100%;height:39px;border:0;border-radius:9px;background:#45664e;color:#fff;font-size:12px;font-weight:700;cursor:pointer;box-shadow:0 5px 12px #45664e25}button:hover{background:#35553d}button:disabled{cursor:default;opacity:.55}
+    .status{min-height:17px;margin:10px 1px 0;font-size:11px;color:#758175;line-height:1.45}.status.success{color:#3f7549}.status.error{color:#ad5e4d}.setup{margin-top:12px;text-align:center;color:#687468;font-size:11px}.setup a{color:#45664e;cursor:pointer;text-decoration:underline}
+    .hidden{display:none}
+  </style>
+</head>
+<body>
+  <header class="brand"><div class="brand-mark" aria-hidden="true">★</div><div><h1>收藏到浏览器首页</h1><p>选择分类后，一键保存当前页面</p></div></header>
+  <main class="card">
+    <p id="pageTitle" class="page-title">正在读取当前页面…</p>
+    <div id="formArea" class="hidden">
+      <div class="field"><label for="bookmarkName">网址名称</label><input id="bookmarkName" type="text" maxlength="2048" autocomplete="off" spellcheck="false"></div>
+      <div class="field"><label for="bookmarkUrl">网址</label><input id="bookmarkUrl" type="url" maxlength="8192" autocomplete="off" spellcheck="false"></div>
+      <label for="collection">收藏到分类</label>
+      <select id="collection"></select>
+      <label class="default-row"><input id="rememberDefault" type="checkbox">将此分类设为默认分类</label>
+      <button id="save" type="button">收藏当前页面</button>
+    </div>
+    <p id="status" class="status" role="status"></p>
+    <p id="setup" class="setup hidden">还没有配置令牌？<a id="openOptions">打开扩展设置</a></p>
+  </main>
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -4,9 +4,12 @@ import asyncio
 import os
 import inspect
 import secrets
+import time
+from collections import Counter
 from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request, Path, HTTPException, Query
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
@@ -16,7 +19,7 @@ from .bookmark_store import BookmarkStoreError, SqliteBookmarkStore
 from .config import Settings
 from .metadata import MetadataFetchError, fetch_public_metadata
 from .notes import NoteConflict, NoteStore, NoteUnavailable
-from .schemas import CaptureRequest, CollectionCreate, CollectionLayout, CollectionUpdate, LinkLayout, LinkOrdersUpdate, LinkUpdate, SearchSettings
+from .schemas import CaptureRequest, CollectionCreate, CollectionLayout, CollectionPassword, CollectionUnlock, CollectionUpdate, LinkLayout, LinkOrdersUpdate, LinkUpdate, SearchSettings
 from .site_assets import MAX_CUSTOM_ICON_BYTES, NEGATIVE_CACHE_TTL_SECONDS, SiteAssetService, SiteIconNotFound, validate_icon_payload
 from .state_store import StateStore
 
@@ -34,6 +37,7 @@ async def _maybe_await(value):
 def create_app(settings: Settings | None = None, bookmarks=None, store=None, note_store=None, backups=None):
     settings = settings or Settings.from_env()
     app = FastAPI(title="Personal Homepage", docs_url=None, redoc_url=None)
+    app.add_middleware(GZipMiddleware, minimum_size=1024)
     app.state.settings = settings
     app.state.store = store or StateStore(settings.data_dir / "state.db")
     app.state.bookmarks = bookmarks or SqliteBookmarkStore(settings.bookmark_db_path)
@@ -42,6 +46,7 @@ def create_app(settings: Settings | None = None, bookmarks=None, store=None, not
     app.state.site_assets = SiteAssetService(settings.data_dir / "site-icons")
     app.state.import_committing = False
     app.state.import_lock = asyncio.Lock()
+    app.state.collection_unlocks: dict[str, tuple[int, float]] = {}
 
     def reject_during_import():
         if app.state.import_committing:
@@ -61,7 +66,12 @@ def create_app(settings: Settings | None = None, bookmarks=None, store=None, not
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         if "cache-control" not in response.headers:
-            response.headers["Cache-Control"] = "no-store"
+            if request.url.path.startswith("/assets/"):
+                response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+            elif request.url.path == "/" or request.url.path.endswith(".html"):
+                response.headers["Cache-Control"] = "no-cache"
+            else:
+                response.headers["Cache-Control"] = "no-store"
         return response
 
     @app.exception_handler(BookmarkStoreError)
@@ -193,12 +203,27 @@ def create_app(settings: Settings | None = None, bookmarks=None, store=None, not
     async def home():
         try:
             collections = await _maybe_await(app.state.bookmarks.collections())
-            links = await _maybe_await(app.state.bookmarks.links())
+            preferences = app.state.store.preferences()
+            locked_ids = {int(identity) for identity, layout in preferences["collections"].items() if layout.get("locked")}
+            count_method = getattr(app.state.bookmarks, "link_counts", None)
+            if count_method:
+                link_counts = await _maybe_await(count_method())
+                try:
+                    links = await _maybe_await(app.state.bookmarks.links(exclude_collection_ids=locked_ids))
+                except TypeError:
+                    all_links = await _maybe_await(app.state.bookmarks.links())
+                    links = [link for link in all_links if link["collectionId"] not in locked_ids]
+            else:
+                all_links = await _maybe_await(app.state.bookmarks.links())
+                link_counts = Counter(link["collectionId"] for link in all_links)
+                links = [link for link in all_links if link["collectionId"] not in locked_ids]
+            collections = [{**collection, "linkCount": link_counts.get(collection["id"], 0)} for collection in collections]
             sync = {"status": "ok"}
         except BookmarkStoreError as error:
             collections, links = [], []
             sync = {"status": "error", "message": str(error)}
-        return {"collections": collections, "links": links, "preferences": app.state.store.preferences(), "sync": sync}
+            preferences = app.state.store.preferences()
+        return {"collections": collections, "links": links, "preferences": preferences, "sync": sync}
 
     @app.patch("/api/links/layouts")
     def link_layouts(update: LinkOrdersUpdate):
@@ -315,6 +340,44 @@ def create_app(settings: Settings | None = None, bookmarks=None, store=None, not
     def collection_layout(update: CollectionLayout, identity: int = Path(gt=0)):
         reject_during_import()
         return app.state.store.patch_collection(identity, update)
+
+    @app.put("/api/collections/{identity}/password")
+    async def set_collection_password(values: CollectionPassword, identity: int = Path(gt=0)):
+        reject_during_import()
+        collections = await _maybe_await(app.state.bookmarks.collections())
+        if not any(collection["id"] == identity for collection in collections):
+            raise HTTPException(status_code=404, detail="分组不存在")
+        saved = app.state.store.set_collection_password(identity, values.password)
+        app.state.collection_unlocks = {token: value for token, value in app.state.collection_unlocks.items() if value[0] != identity}
+        return saved
+
+    @app.delete("/api/collections/{identity}/password")
+    async def clear_collection_password(identity: int = Path(gt=0)):
+        reject_during_import()
+        collections = await _maybe_await(app.state.bookmarks.collections())
+        if not any(collection["id"] == identity for collection in collections):
+            raise HTTPException(status_code=404, detail="分组不存在")
+        saved = app.state.store.clear_collection_password(identity)
+        app.state.collection_unlocks = {token: value for token, value in app.state.collection_unlocks.items() if value[0] != identity}
+        return saved
+
+    @app.post("/api/collections/{identity}/unlock")
+    async def unlock_collection(values: CollectionUnlock, identity: int = Path(gt=0)):
+        reject_during_import()
+        if not app.state.store.collection_is_locked(identity):
+            raise HTTPException(status_code=409, detail="该分组未设置密码")
+        if not app.state.store.verify_collection_password(identity, values.password):
+            raise HTTPException(status_code=403, detail="密码不正确")
+        token = secrets.token_urlsafe(32)
+        app.state.collection_unlocks[token] = (identity, time.monotonic() + 30 * 60)
+        app.state.collection_unlocks = {key: value for key, value in app.state.collection_unlocks.items() if value[1] > time.monotonic()}
+        try:
+            links = await _maybe_await(app.state.bookmarks.links(include_collection_ids={identity}))
+        except TypeError:
+            # Compatibility with lightweight bookmark adapters used by integrations.
+            all_links = await _maybe_await(app.state.bookmarks.links())
+            links = [link for link in all_links if link["collectionId"] == identity]
+        return {"collectionId": identity, "unlockToken": token, "links": links}
 
     @app.get("/api/search-engines")
     def search_engines():

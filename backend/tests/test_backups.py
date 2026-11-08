@@ -17,7 +17,7 @@ def test_backup_timestamp_persists_across_restart(tmp_path):
 
     assert StateStore(path).last_backup_at() == "2026-10-29T02:30:00Z"
     with sqlite3.connect(path) as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 3
 
 
 def test_backup_timestamp_migration_preserves_existing_preferences(tmp_path):

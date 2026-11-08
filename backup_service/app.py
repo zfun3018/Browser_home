@@ -93,15 +93,25 @@ class BackupManager:
         current = time.time() if now is None else now
         return current - latest_path.stat().st_mtime >= self.settings.automatic_backup_interval_seconds
 
-    def save_archive(self, archive: Path, prefix: str) -> Path:
+    def save_archive(self, archive: Path, prefix: str, *, replace_history: bool = False) -> Path:
         identity = str(uuid.uuid4())
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-        target = self.settings.output_dir / f"{prefix}-{stamp}-{identity[:8]}.zip"
+        if replace_history:
+            target = self.settings.output_dir / f"{prefix}-latest.zip"
+        else:
+            stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+            target = self.settings.output_dir / f"{prefix}-{stamp}-{identity[:8]}.zip"
         temporary = target.with_suffix(".partial")
         try:
             self.settings.output_dir.mkdir(parents=True, exist_ok=True)
             shutil.copy2(archive, temporary)
             os.replace(temporary, target)
+            if replace_history:
+                for previous in self.settings.output_dir.glob(f"{prefix}-*.zip"):
+                    if previous != target and previous.is_file() and not previous.is_symlink():
+                        try:
+                            previous.unlink()
+                        except OSError:
+                            _logger.warning("Could not remove replaced backup archive: %s", previous.name)
         except OSError as exc:
             temporary.unlink(missing_ok=True)
             raise ArchiveError("无法将备份写入本机备份目录") from exc
@@ -113,7 +123,7 @@ class BackupManager:
             directory = self.settings.staging_dir / f"backup-{identity}"
             try:
                 archive = build_archive(directory, self.settings.sources)
-                saved = self.save_archive(archive, "browser-homepage-backup")
+                saved = self.save_archive(archive, "browser-homepage-backup", replace_history=True)
             except ArchiveError:
                 shutil.rmtree(directory, ignore_errors=True)
                 raise

@@ -1,10 +1,11 @@
-.backup-widget { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.backup-status { display: flex; align-items: center; gap: 5px; color: #768174; font-size: 9px; white-space: nowrap; }
-.backup-status i { width: 5px; height: 5px; border-radius: 50%; background: #7c9a7d; }
-.backup-status-due { color: #9b7042; }
-.backup-status-due i { background: #c89554; }
-.backup-status-error { color: #ae6653; }
-.backup-status-error i { background: #bd7b60; }
+.backup-widget { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.backup-status { display: flex; align-items: center; gap: 6px; color: var(--md-on-surface-variant); font-size: 10px; white-space: nowrap; }
+.backup-status i { width: 6px; height: 6px; border-radius: 50%; background: var(--md-primary); }
+.backup-status-due { padding: 6px 9px; border-radius: 999px; background: var(--md-tertiary-container); color: var(--md-on-tertiary-container); font-weight: 600; }
+.backup-status-due i { background: var(--md-tertiary); }
+.backup-status-short { display: none; }
+.backup-status-error { color: var(--md-error); }
+.backup-status-error i { background: var(--md-error); }
 .backup-actions { display: flex; flex: none; gap: 2px; }
 .backup-file-input { display: none; }
 .backup-button {
@@ -13,25 +14,28 @@
   align-items: center;
   justify-content: center;
   gap: 6px;
-  min-height: 28px;
-  padding: 0 7px;
-  border: 1px solid #dce4d9;
-  border-radius: 8px;
-  background: #fff;
-  color: var(--green);
-  font-size: 9px;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: 18px;
+  background: transparent;
+  color: var(--md-on-surface-variant);
+  font-size: 10px;
   text-decoration: none;
   cursor: pointer;
+  transition: background 160ms var(--ease-standard), color 160ms var(--ease-standard), transform 160ms var(--ease-standard);
 }
-.backup-button:hover { border-color: #b8c8b5; background: var(--green-soft); }
+.backup-button:hover { background: var(--md-surface-container-high); color: var(--md-primary); }
+.backup-button:active { transform: scale(.96); }
+.backup-button svg { width: 17px; height: 17px; stroke-width: 1.8; }
 .backup-button:disabled { cursor: wait; opacity: .7; }
-.app-dark .backup-button { border-color: var(--line); background: var(--panel); color: #b4c6b0; }
-.import-dialog p { color: var(--muted); font-size: 11px; line-height: 1.65; }
-.import-dialog .import-warning { color: #9b6647; }
-.import-confirm { display: flex; align-items: center; gap: 8px; padding: 11px 0 4px; color: var(--ink); font-size: 11px; }
-.import-confirm input { accent-color: var(--green); }
-.app-dark .import-dialog .import-warning { color: #d7aa85; }
+.import-dialog p { color: var(--md-on-surface-variant); font-size: 12px; line-height: 1.65; }
+.import-dialog .import-warning { color: var(--md-error); }
+.import-confirm { display: flex; align-items: center; gap: 8px; padding: 11px 0 4px; color: var(--md-on-surface); font-size: 12px; }
+.import-confirm input { accent-color: var(--md-primary); }
 @media (max-width: 500px) {
-  .backup-status span { font-size: 0; }
-  .backup-status { min-width: 8px; }
+  .backup-status-label { display: none; }
+  .backup-status-short { display: inline; }
+  .backup-status { min-width: 0; }
 }

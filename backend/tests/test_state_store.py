@@ -15,7 +15,7 @@ def test_preferences_survive_restart_and_patch_retains_other_flags(tmp_path):
     assert prefs["links"]["12"] == {"showName": False, "showIcon": False, "showDescription": True, "order": 2}
     assert prefs["collections"]["3"]["collapsed"] is True
     with sqlite3.connect(path) as db:
-        assert db.execute("PRAGMA user_version").fetchone()[0] == 2
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 3
 
 
 def test_search_templates_persist_and_require_safe_urls_and_selected_provider(tmp_path):

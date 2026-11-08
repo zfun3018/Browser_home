@@ -44,7 +44,7 @@ Invoke-WebRequest http://127.0.0.1:3011/health
 - `backups`：新格式 SQLite 备份 ZIP。
 - `homepage-secrets/capture_token.txt`：浏览器扩展的一键收藏令牌。
 
-备份服务默认每周自动生成一次备份，也可以在首页手动创建。导入前会先生成当前数据的回滚包，校验通过后才替换 SQLite、笔记和原生服务配置。旧格式备份会保留，但新服务只接受 `formatVersion: 2` 的 SQLite 归档。
+备份服务默认每周自动生成一次备份，也可以在首页手动创建。每次备份成功后，`backups/browser-homepage-backup-latest.zip` 都会原子替换为最新内容，旧的同名规则历史文件会清理；导入前生成的回滚包会单独保留。新服务只接受 `formatVersion: 2` 的 SQLite 归档。
 
 迁移完成后留下的 `data`、`pgdata`、`meili_data` 和旧 ZIP 是历史数据，不参与当前服务运行。确认不再需要回滚后，可由管理员自行归档或删除。
 

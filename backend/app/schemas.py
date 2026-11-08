@@ -93,6 +93,22 @@ class LinkOrdersUpdate(StrictModel):
 class CollectionLayout(StrictModel):
     collapsed: bool | None = None
     order: int | None = Field(default=None, ge=0)
+    displayMode: Literal["grid", "list"] | None = None
+
+
+class CollectionPassword(StrictModel):
+    password: str = Field(min_length=1, max_length=128)
+
+    @field_validator("password")
+    @classmethod
+    def password_safe(cls, value: str) -> str:
+        if any(ord(char) < 32 for char in value):
+            raise ValueError("密码不能包含控制字符")
+        return value
+
+
+class CollectionUnlock(StrictModel):
+    password: str = Field(min_length=1, max_length=128)
 
 
 class CollectionCreate(StrictModel):

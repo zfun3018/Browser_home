@@ -22,7 +22,7 @@ describe('homepage backup reminder', () => {
 
     render(<BackupControls />)
 
-    expect(await screen.findByRole('status')).toHaveTextContent('待备份')
+    expect(await screen.findByRole('status')).toHaveTextContent('尚未备份')
     expect(screen.getByRole('button', { name: '立即备份到本地文件夹' })).toBeInTheDocument()
     expect(screen.queryByText(/明文凭据/)).not.toBeInTheDocument()
   })
@@ -32,7 +32,7 @@ describe('homepage backup reminder', () => {
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
       const url = String(input)
       if (url === '/api/backup/status') return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ lastBackupAt: null }) } as Response)
-      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ id: identity, filename: 'browser-homepage-backup-test.zip', lastBackupAt: '2026-10-29T02:30:00Z' }) } as Response)
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve({ id: identity, filename: 'browser-homepage-backup-test.zip', lastBackupAt: new Date().toISOString() }) } as Response)
     })
     vi.stubGlobal('fetch', fetchMock)
     const clickDownload = vi.spyOn(HTMLAnchorElement.prototype, 'click')
@@ -58,7 +58,7 @@ describe('homepage backup reminder', () => {
     const clickDownload = vi.spyOn(HTMLAnchorElement.prototype, 'click')
     const onImported = vi.fn()
     render(<BackupControls onImported={onImported}/>)
-    expect(await screen.findByRole('status')).toHaveTextContent('待备份')
+    expect(await screen.findByRole('status')).toHaveTextContent('尚未备份')
 
     vi.useFakeTimers()
     fireEvent.change(screen.getByLabelText('选择备份 ZIP 文件'), { target: { files: [new File(['archive'], 'backup.zip', { type: 'application/zip' })] } })
